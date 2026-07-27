@@ -13,7 +13,7 @@ export async function POST(request: Request) {
       return_binary: false,
       hide_watermark: false,
       safe_mode: false,
-      format: "webp",
+      format: "png",
       ...body
     })
   });

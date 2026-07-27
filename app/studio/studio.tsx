@@ -7,6 +7,7 @@ type Asset = {
   type: "image" | "video";
   src: string;
   label: string;
+  extension?: "jpg" | "png" | "mp4";
 };
 
 type VideoJob = {
@@ -17,9 +18,27 @@ type VideoJob = {
 
 const aspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 
-function withImagePrefix(value: string) {
+function withImagePrefix(value: string, format: "png" | "jpeg") {
   if (value.startsWith("data:")) return value;
-  return `data:image/webp;base64,${value}`;
+  return `data:image/${format};base64,${value}`;
+}
+
+async function readApiResponse(response: Response) {
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text };
+  }
+}
+
+function errorMessage(data: any, fallback: string) {
+  if (typeof data?.error === "string") return data.error;
+  if (typeof data?.error?.message === "string") return data.error.message;
+  if (typeof data?.details === "object") return JSON.stringify(data.details);
+  return fallback;
 }
 
 async function fileToDataUrl(file?: File | null) {
@@ -40,6 +59,7 @@ export function Studio() {
   );
   const [negativePrompt, setNegativePrompt] = useState("low quality, blurry, distorted text");
   const [imageModel, setImageModel] = useState<string>(imagePresets[0].id);
+  const [imageFormat, setImageFormat] = useState<"png" | "jpeg">("png");
   const [videoPresetId, setVideoPresetId] = useState<string>(videoPresets[0].id);
   const [aspectRatio, setAspectRatio] = useState("16:9");
   const [duration, setDuration] = useState<string>(videoPresets[0].duration);
@@ -48,6 +68,7 @@ export function Studio() {
   const [imageInput, setImageInput] = useState("");
   const [videoInput, setVideoInput] = useState("");
   const [job, setJob] = useState<VideoJob | null>(null);
+  const [polling, setPolling] = useState(false);
   const [quote, setQuote] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -84,6 +105,7 @@ export function Studio() {
       model: preset.id,
       prompt,
       negative_prompt: negativePrompt,
+      format: imageFormat,
       variants: 1,
       aspect_ratio: aspectRatio
     };
@@ -102,19 +124,20 @@ export function Studio() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    const data = await response.json();
+    const data = await readApiResponse(response);
     setBusy(false);
 
     if (!response.ok) {
-      setError(data.error || "No se pudo generar la imagen.");
+      setError(errorMessage(data, "No se pudo generar la imagen."));
       setStatus("");
       return;
     }
 
     const nextAssets = (data.images || []).map((image: string, index: number) => ({
       type: "image" as const,
-      src: withImagePrefix(image),
-      label: `${preset.label} #${index + 1}`
+      src: withImagePrefix(image, imageFormat),
+      label: `${preset.label} #${index + 1}`,
+      extension: imageFormat === "jpeg" ? "jpg" : "png"
     }));
     setAssets((current) => [...nextAssets, ...current]);
     setImageInput(nextAssets[0]?.src || imageInput);
@@ -134,6 +157,7 @@ export function Studio() {
       aspect_ratio: aspectRatio,
       audio
     };
+    if (videoPreset.mode === "image" && imageInput) payload.image_url = imageInput;
     if (videoPreset.mode === "video" && videoInput) payload.video_url = videoInput;
 
     const response = await fetch("/api/venice/video/quote", {
@@ -141,11 +165,11 @@ export function Studio() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    const data = await response.json();
+    const data = await readApiResponse(response);
     setBusy(false);
 
     if (!response.ok) {
-      setError(data.error || "No se pudo cotizar.");
+      setError(errorMessage(data, "No se pudo cotizar."));
       setStatus("");
       return;
     }
@@ -155,6 +179,15 @@ export function Studio() {
   }
 
   async function queueVideo() {
+    if (videoPreset.mode === "image" && !imageInput) {
+      setError("Sube una imagen base o pega una URL antes de crear este video.");
+      return;
+    }
+    if (videoPreset.mode === "video" && !videoInput) {
+      setError("Sube un video base o pega una URL antes de continuar este video.");
+      return;
+    }
+
     setBusy(true);
     setError("");
     setStatus("Enviando video a la cola...");
@@ -162,6 +195,7 @@ export function Studio() {
     const payload: Record<string, unknown> = {
       model: videoPresetId,
       prompt,
+      consents: {},
       negative_prompt: negativePrompt,
       duration,
       resolution,
@@ -177,45 +211,46 @@ export function Studio() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    const data = await response.json();
+    const data = await readApiResponse(response);
     setBusy(false);
 
     if (!response.ok) {
-      setError(data.error?.message || data.error || "No se pudo crear el job.");
+      setError(errorMessage(data, "No se pudo crear el job."));
       setStatus("");
       return;
     }
 
     setJob(data);
-    setStatus(`Job listo: ${data.queue_id}`);
+    setStatus(`Job listo: ${data.queue_id}. Consultando automaticamente...`);
+    pollVideo(data);
   }
 
-  async function retrieveVideo() {
-    if (!job) return;
-    setBusy(true);
+  async function pollVideo(currentJob: VideoJob, attempt = 0) {
+    setPolling(true);
     setError("");
-    setStatus("Consultando video...");
+    setStatus(attempt ? `Procesando video... consulta ${attempt + 1}` : "Consultando video...");
 
     const response = await fetch("/api/venice/video/retrieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(job)
+      body: JSON.stringify(currentJob)
     });
-    const data = await response.json();
-    setBusy(false);
+    const data = await readApiResponse(response);
 
     if (!response.ok) {
-      setError(data.error?.message || data.error || "No se pudo consultar el video.");
+      setPolling(false);
+      setError(errorMessage(data, "No se pudo consultar el video."));
       setStatus("");
       return;
     }
 
     if (data.status === "COMPLETED" && data.video) {
       setAssets((current) => [
-        { type: "video", src: data.video, label: `${videoPreset.label} ${duration}` },
+        { type: "video", src: data.video, label: `${videoPreset.label} ${duration}`, extension: "mp4" },
         ...current
       ]);
       setVideoInput(data.video);
+      setPolling(false);
       setStatus("Video listo.");
       return;
     }
@@ -224,6 +259,19 @@ export function Studio() {
       ? Math.max(0, Math.round((data.average_execution_time - data.execution_duration) / 1000))
       : null;
     setStatus(remaining === null ? `Estado: ${data.status}` : `Procesando. Estimado: ${remaining}s`);
+
+    if (attempt < 60) {
+      window.setTimeout(() => pollVideo(currentJob, attempt + 1), 8000);
+      return;
+    }
+
+    setPolling(false);
+    setStatus("El job sigue procesando. Usa Revisar job en unos minutos.");
+  }
+
+  async function retrieveVideo() {
+    if (!job) return;
+    pollVideo(job);
   }
 
   async function logout() {
@@ -300,6 +348,25 @@ export function Studio() {
                     ))}
                   </div>
                 </div>
+                <div className="field">
+                  <label>Formato de descarga</label>
+                  <div className="segments">
+                    <button
+                      className={`segment ${imageFormat === "png" ? "active" : ""}`}
+                      onClick={() => setImageFormat("png")}
+                      type="button"
+                    >
+                      PNG
+                    </button>
+                    <button
+                      className={`segment ${imageFormat === "jpeg" ? "active" : ""}`}
+                      onClick={() => setImageFormat("jpeg")}
+                      type="button"
+                    >
+                      JPG
+                    </button>
+                  </div>
+                </div>
                 <button className="primary" disabled={busy} onClick={generateImage} type="button">
                   {busy ? "Trabajando..." : "Crear imagen"}
                 </button>
@@ -369,13 +436,13 @@ export function Studio() {
                   </div>
                 ) : null}
                 <div className="actions">
-                  <button className="secondary" disabled={busy} onClick={quoteVideo} type="button">
+                  <button className="secondary" disabled={busy || polling} onClick={quoteVideo} type="button">
                     Cotizar
                   </button>
-                  <button className="primary" disabled={busy} onClick={queueVideo} type="button">
-                    Crear video
+                  <button className="primary" disabled={busy || polling} onClick={queueVideo} type="button">
+                    {polling ? "Procesando..." : "Crear video"}
                   </button>
-                  <button className="secondary" disabled={busy || !job} onClick={retrieveVideo} type="button">
+                  <button className="secondary" disabled={busy || polling || !job} onClick={retrieveVideo} type="button">
                     Revisar job
                   </button>
                 </div>
@@ -404,7 +471,7 @@ export function Studio() {
                   )}
                   <footer>
                     <span>{asset.label}</span>
-                    <a download={asset.type === "image" ? "secret-books.webp" : "secret-books.mp4"} href={asset.src}>
+                    <a download={`secret-books.${asset.extension || (asset.type === "image" ? "png" : "mp4")}`} href={asset.src}>
                       Descargar
                     </a>
                   </footer>

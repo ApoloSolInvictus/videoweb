@@ -10,7 +10,7 @@ Current Venice model research favored:
 - Videos: `longcat-distilled-text-to-video` for maximum duration per credit. A 30s 720p quote returned about `$0.53`.
 - Cinematic/private clips: `grok-imagine-*-private`, useful for photorealistic work with audio and private download flow.
 
-The UI includes a video quote button before queueing a generation.
+The UI includes PNG/JPG image downloads, a video quote button before queueing, and automatic polling until Venice returns the final video.
 
 ## Environment
 
