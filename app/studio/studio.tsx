@@ -37,6 +37,7 @@ async function readApiResponse(response: Response) {
 function errorMessage(data: any, fallback: string) {
   if (typeof data?.error === "string") return data.error;
   if (typeof data?.error?.message === "string") return data.error.message;
+  if (typeof data?._errors === "object" || typeof data?.audio === "object") return JSON.stringify(data);
   if (typeof data?.details === "object") return JSON.stringify(data.details);
   return fallback;
 }
@@ -78,6 +79,13 @@ export function Studio() {
     () => videoPresets.find((preset) => preset.id === videoPresetId) || videoPresets[0],
     [videoPresetId]
   );
+  const canConfigureAudio = Boolean(videoPreset.audioConfigurable);
+
+  function addAudioConfig(payload: Record<string, unknown>) {
+    if (canConfigureAudio) {
+      payload.audio = audio;
+    }
+  }
 
   function applyVideoPreset(id: string) {
     const preset = videoPresets.find((item) => item.id === id) || videoPresets[0];
@@ -154,9 +162,9 @@ export function Studio() {
       model: videoPresetId,
       duration,
       resolution,
-      aspect_ratio: aspectRatio,
-      audio
+      aspect_ratio: aspectRatio
     };
+    addAudioConfig(payload);
     if (videoPreset.mode === "image" && imageInput) payload.image_url = imageInput;
     if (videoPreset.mode === "video" && videoInput) payload.video_url = videoInput;
 
@@ -199,9 +207,9 @@ export function Studio() {
       negative_prompt: negativePrompt,
       duration,
       resolution,
-      aspect_ratio: aspectRatio,
-      audio
+      aspect_ratio: aspectRatio
     };
+    addAudioConfig(payload);
 
     if (videoPreset.mode === "image") payload.image_url = imageInput;
     if (videoPreset.mode === "video") payload.video_url = videoInput;
@@ -409,7 +417,13 @@ export function Studio() {
                   </div>
                 </div>
                 <label className="note">
-                  <input checked={audio} onChange={(event) => setAudio(event.target.checked)} type="checkbox" /> Audio
+                  <input
+                    checked={audio}
+                    disabled={!canConfigureAudio}
+                    onChange={(event) => setAudio(event.target.checked)}
+                    type="checkbox"
+                  />{" "}
+                  {canConfigureAudio ? "Audio configurable" : "Audio segun modelo"}
                 </label>
                 {videoPreset.mode === "image" ? (
                   <div className="field">

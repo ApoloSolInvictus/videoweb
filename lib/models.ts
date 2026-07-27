@@ -37,6 +37,7 @@ export const videoPresets = [
     duration: "30s",
     resolution: "720p",
     audio: false,
+    audioConfigurable: false,
     note: "Mas duracion por credito"
   },
   {
@@ -46,6 +47,7 @@ export const videoPresets = [
     duration: "15s",
     resolution: "480p",
     audio: true,
+    audioConfigurable: false,
     note: "Privado, audio, fotorealista"
   },
   {
@@ -55,6 +57,7 @@ export const videoPresets = [
     duration: "15s",
     resolution: "480p",
     audio: true,
+    audioConfigurable: false,
     note: "Animar imagen privada"
   },
   {
@@ -64,6 +67,7 @@ export const videoPresets = [
     duration: "15s",
     resolution: "360p",
     audio: true,
+    audioConfigurable: true,
     note: "Economico con audio"
   },
   {
@@ -73,6 +77,7 @@ export const videoPresets = [
     duration: "Auto",
     resolution: "720p",
     audio: false,
+    audioConfigurable: false,
     note: "Continuar o editar video"
   }
 ] as const;
